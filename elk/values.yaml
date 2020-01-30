@@ -1,0 +1,1123 @@
+# Default values for elk.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+elasticsearch:
+  enabled: true
+  # Default values for elasticsearch.
+  # This is a YAML-formatted file.
+  # Declare variables to be passed into your templates.
+  appVersion: "6.8.2"
+
+  ## Define serviceAccount names for components. Defaults to component's fully qualified name.
+  ##
+  serviceAccounts:
+    client:
+      create: true
+      name:
+    master:
+      create: true
+      name:
+    data:
+      create: true
+      name:
+
+  ## Specify if a Pod Security Policy for node-exporter must be created
+  ## Ref: https://kubernetes.io/docs/concepts/policy/pod-security-policy/
+  ##
+  podSecurityPolicy:
+    enabled: false
+    annotations: {}
+      ## Specify pod annotations
+      ## Ref: https://kubernetes.io/docs/concepts/policy/pod-security-policy/#apparmor
+      ## Ref: https://kubernetes.io/docs/concepts/policy/pod-security-policy/#seccomp
+      ## Ref: https://kubernetes.io/docs/concepts/policy/pod-security-policy/#sysctl
+      ##
+      # seccomp.security.alpha.kubernetes.io/allowedProfileNames: '*'
+      # seccomp.security.alpha.kubernetes.io/defaultProfileName: 'docker/default'
+      # apparmor.security.beta.kubernetes.io/defaultProfileName: 'runtime/default'
+
+  securityContext:
+    enabled: false
+    runAsUser: 1000
+
+  ## Use an alternate scheduler, e.g. "stork".
+  ## ref: https://kubernetes.io/docs/tasks/administer-cluster/configure-multiple-schedulers/
+  ##
+  # schedulerName: "default-scheduler"
+
+  image:
+    repository: "docker.elastic.co/elasticsearch/elasticsearch-oss"
+    tag: "6.8.2"
+    pullPolicy: "IfNotPresent"
+    # If specified, use these secrets to access the image
+    # pullSecrets:
+    #   - registry-secret
+
+  testFramework:
+    image: "dduportal/bats"
+    tag: "0.4.0"
+
+  initImage:
+    repository: "busybox"
+    tag: "latest"
+    pullPolicy: "Always"
+
+  cluster:
+    name: "elasticsearch"
+    # If you want X-Pack installed, switch to an image that includes it, enable this option and toggle the features you want
+    # enabled in the environment variables outlined in the README
+    xpackEnable: false
+    # Some settings must be placed in a keystore, so they need to be mounted in from a secret.
+    # Use this setting to specify the name of the secret
+    # keystoreSecret: eskeystore
+    config: {}
+    # Custom parameters, as string, to be added to ES_JAVA_OPTS environment variable
+    additionalJavaOpts: ""
+    # Command to run at the end of deployment
+    bootstrapShellCommand: ""
+    env:
+      # IMPORTANT: https://www.elastic.co/guide/en/elasticsearch/reference/current/important-settings.html#minimum_master_nodes
+      # To prevent data loss, it is vital to configure the discovery.zen.minimum_master_nodes setting so that each master-eligible
+      # node knows the minimum number of master-eligible nodes that must be visible in order to form a cluster.
+      MINIMUM_MASTER_NODES: "2"
+    # List of plugins to install via dedicated init container
+    plugins: []
+      # - ingest-attachment
+      # - mapper-size
+
+    loggingYml:
+      # you can override this using by setting a system property, for example -Des.logger.level=DEBUG
+      es.logger.level: INFO
+      rootLogger: ${es.logger.level}, console
+      logger:
+        # log action execution errors for easier debugging
+        action: DEBUG
+        # reduce the logging for aws, too much is logged under the default INFO
+        com.amazonaws: WARN
+      appender:
+        console:
+          type: console
+          layout:
+            type: consolePattern
+            conversionPattern: "[%d{ISO8601}][%-5p][%-25c] %m%n"
+
+    log4j2Properties: |
+      status = error
+      appender.console.type = Console
+      appender.console.name = console
+      appender.console.layout.type = PatternLayout
+      appender.console.layout.pattern = [%d{ISO8601}][%-5p][%-25c{1.}] %marker%m%n
+      rootLogger.level = info
+      rootLogger.appenderRef.console.ref = console
+      logger.searchguard.name = com.floragunn
+      logger.searchguard.level = info
+  client:
+    name: client
+    replicas: 2
+    serviceType: ClusterIP
+    ## If coupled with serviceType = "NodePort", this will set a specific nodePort to the client HTTP port
+    # httpNodePort: 30920
+    loadBalancerIP: {}
+    loadBalancerSourceRanges: {}
+  ## (dict) If specified, apply these annotations to the client service
+  #  serviceAnnotations:
+  #    example: client-svc-foo
+    heapSize: "512m"
+    # additionalJavaOpts: "-XX:MaxRAM=512m"
+    antiAffinity: "soft"
+    nodeAffinity: {}
+    nodeSelector: {}
+    tolerations: []
+    # terminationGracePeriodSeconds: 60
+    initResources: {}
+      # limits:
+      #   cpu: "25m"
+      #   # memory: "128Mi"
+      # requests:
+      #   cpu: "25m"
+      #   memory: "128Mi"
+    resources:
+      limits:
+        cpu: "1"
+        # memory: "1024Mi"
+      requests:
+        cpu: "25m"
+        memory: "512Mi"
+    priorityClassName: ""
+    ## (dict) If specified, apply these annotations to each client Pod
+    # podAnnotations:
+    #   example: client-foo
+    podDisruptionBudget:
+      enabled: false
+      minAvailable: 1
+      # maxUnavailable: 1
+    hooks: {}
+      ## (string) Script to execute prior the client pod stops.
+      # preStop: |-
+
+      ## (string) Script to execute after the client pod starts.
+      # postStart: |-
+    ingress:
+      enabled: true
+      annotations:
+        kubernetes.io/ingress.class: "nginx"
+        kubernetes.io/tls-acme: "true"
+        certmanager.k8s.io/cluster-issuer: "letsencrypt-prod"
+        acme.cert-manager.io/http01-ingress-class: "nginx"
+        cert-manager.io/acme-challenge-type: "http01"
+      path: /
+      hosts:
+        - elasticsearch
+      tls: 
+      - secretName: elasticsearch-tls
+        hosts:
+        - elasticsearch
+
+  master:
+    name: master
+    exposeHttp: false
+    replicas: 2
+    heapSize: "512m"
+    # additionalJavaOpts: "-XX:MaxRAM=512m"
+    persistence:
+      enabled: true
+      accessMode: ReadWriteOnce
+      name: data
+      size: "4Gi"
+      # storageClass: "ssd"
+    readinessProbe:
+      httpGet:
+        path: /_cluster/health?local=true
+        port: 9200
+      initialDelaySeconds: 5
+    antiAffinity: "soft"
+    nodeAffinity: {}
+    nodeSelector: {}
+    tolerations: []
+    # terminationGracePeriodSeconds: 60
+    initResources: {}
+      # limits:
+      #   cpu: "25m"
+      #   # memory: "128Mi"
+      # requests:
+      #   cpu: "25m"
+      #   memory: "128Mi"
+    resources:
+      limits:
+        cpu: "1"
+        # memory: "1024Mi"
+      requests:
+        cpu: "25m"
+        memory: "512Mi"
+    priorityClassName: ""
+    ## (dict) If specified, apply these annotations to each master Pod
+    # podAnnotations:
+    #   example: master-foo
+    podManagementPolicy: OrderedReady
+    podDisruptionBudget:
+      enabled: false
+      minAvailable: 2  # Same as `cluster.env.MINIMUM_MASTER_NODES`
+      # maxUnavailable: 1
+    updateStrategy:
+      type: OnDelete
+    hooks: {}
+      ## (string) Script to execute prior the master pod stops.
+      # preStop: |-
+
+      ## (string) Script to execute after the master pod starts.
+      # postStart: |-
+
+  data:
+    name: data
+    exposeHttp: false
+    replicas: 2
+    heapSize: "1536m"
+    # additionalJavaOpts: "-XX:MaxRAM=1536m"
+    persistence:
+      enabled: true
+      accessMode: ReadWriteOnce
+      name: data
+      size: "30Gi"
+      # storageClass: "ssd"
+    readinessProbe:
+      httpGet:
+        path: /_cluster/health?local=true
+        port: 9200
+      initialDelaySeconds: 5
+    terminationGracePeriodSeconds: 3600
+    antiAffinity: "soft"
+    nodeAffinity: {}
+    nodeSelector: {}
+    tolerations: []
+    initResources: {}
+      # limits:
+      #   cpu: "25m"
+      #   # memory: "128Mi"
+      # requests:
+      #   cpu: "25m"
+      #   memory: "128Mi"
+    resources:
+      limits:
+        cpu: "1"
+        # memory: "2048Mi"
+      requests:
+        cpu: "25m"
+        memory: "1536Mi"
+    priorityClassName: ""
+    ## (dict) If specified, apply these annotations to each data Pod
+    # podAnnotations:
+    #   example: data-foo
+    podDisruptionBudget:
+      enabled: false
+      # minAvailable: 1
+      maxUnavailable: 1
+    podManagementPolicy: OrderedReady
+    updateStrategy:
+      type: OnDelete
+    hooks:
+      ## Drain the node before stopping it and re-integrate it into the cluster after start.
+      ## When enabled, it supersedes `data.hooks.preStop` and `data.hooks.postStart` defined below.
+      drain:
+        enabled: true
+
+      ## (string) Script to execute prior the data pod stops. Ignored if `data.hooks.drain.enabled` is true (default)
+      # preStop: |-
+      #   #!/bin/bash
+      #   exec &> >(tee -a "/var/log/elasticsearch-hooks.log")
+      #   NODE_NAME=${HOSTNAME}
+      #   curl -s -XPUT -H 'Content-Type: application/json' '{{ template "elasticsearch.client.fullname" . }}:9200/_cluster/settings' -d "{
+      #     \"transient\" :{
+      #         \"cluster.routing.allocation.exclude._name\" : \"${NODE_NAME}\"
+      #     }
+      #   }"
+      #   echo "Node ${NODE_NAME} is exluded from the allocation"
+
+      ## (string) Script to execute after the data pod starts. Ignored if `data.hooks.drain.enabled` is true (default)
+      # postStart: |-
+      #   #!/bin/bash
+      #   exec &> >(tee -a "/var/log/elasticsearch-hooks.log")
+      #   NODE_NAME=${HOSTNAME}
+      #   CLUSTER_SETTINGS=$(curl -s -XGET "http://{{ template "elasticsearch.client.fullname" . }}:9200/_cluster/settings")
+      #   if echo "${CLUSTER_SETTINGS}" | grep -E "${NODE_NAME}"; then
+      #     echo "Activate node ${NODE_NAME}"
+      #     curl -s -XPUT -H 'Content-Type: application/json' "http://{{ template "elasticsearch.client.fullname" . }}:9200/_cluster/settings" -d "{
+      #       \"transient\" :{
+      #           \"cluster.routing.allocation.exclude._name\" : null
+      #       }
+      #     }"
+      #   fi
+      #   echo "Node ${NODE_NAME} is ready to be used"
+
+  ## Sysctl init container to setup vm.max_map_count
+  # see https://www.elastic.co/guide/en/elasticsearch/reference/current/vm-max-map-count.html
+  # and https://www.elastic.co/guide/en/elasticsearch/reference/current/setup-configuration-memory.html#mlockall
+  sysctlInitContainer:
+    enabled: true
+  ## Chown init container to change ownership of data and logs directories to elasticsearch user
+  chownInitContainer:
+    enabled: true
+  ## Additional init containers
+  extraInitContainers: |
+  forceIpv6: false
+
+kibana:
+  enabled: true
+  image:
+    repository: "docker.elastic.co/kibana/kibana-oss"
+    tag: "6.7.0"
+    pullPolicy: "IfNotPresent"
+
+  testFramework:
+    enabled: "true"
+    image: "dduportal/bats"
+    tag: "0.4.0"
+
+  commandline:
+    args: []
+
+  env:
+    ELASTICSEARCH_HOSTS: http://elasticsearch-client:9200
+  # env: {}
+    ## All Kibana configuration options are adjustable via env vars.
+    ## To adjust a config option to an env var uppercase + replace `.` with `_`
+    ## Ref: https://www.elastic.co/guide/en/kibana/current/settings.html
+    ## For kibana < 6.6, use ELASTICSEARCH_URL instead
+    # ELASTICSEARCH_HOSTS: http://elasticsearch-client:9200
+    # SERVER_PORT: 5601
+    # LOGGING_VERBOSE: "true"
+    # SERVER_DEFAULTROUTE: "/app/kibana"
+
+  envFromSecrets: {}
+    ## Create a secret manually. Reference it here to inject environment variables
+    # ELASTICSEARCH_USERNAME:
+    #   from:
+    #     secret: secret-name-here
+    #     key: ELASTICSEARCH_USERNAME
+    # ELASTICSEARCH_PASSWORD:
+    #   from:
+    #     secret: secret-name-here
+    #     key: ELASTICSEARCH_PASSWORD
+
+  files:
+    kibana.yml:
+      ## Default Kibana configuration from kibana-docker.
+      server.name: kibana
+      server.host: "0"
+      ## For kibana < 6.6, use elasticsearch.url instead
+      elasticsearch.hosts: http://elasticsearch:9200
+
+      ## Custom config properties below
+      ## Ref: https://www.elastic.co/guide/en/kibana/current/settings.html
+      # server.port: 5601
+      # logging.verbose: "true"
+      # server.defaultRoute: "/app/kibana"
+
+  deployment:
+    annotations: {}
+
+  service:
+    type: ClusterIP
+    # clusterIP: None
+    # portName: kibana-svc
+    externalPort: 443
+    internalPort: 5601
+    # authProxyPort: 5602 To be used with authProxyEnabled and a proxy extraContainer
+    ## External IP addresses of service
+    ## Default: nil
+    ##
+    # externalIPs:
+    # - 192.168.0.1
+    #
+    ## LoadBalancer IP if service.type is LoadBalancer
+    ## Default: nil
+    ##
+    # loadBalancerIP: 10.2.2.2
+    annotations: {}
+      # Annotation example: setup ssl with aws cert when service.type is LoadBalancer
+      # service.beta.kubernetes.io/aws-load-balancer-ssl-cert: arn:aws:acm:us-east-1:EXAMPLE_CERT
+    labels: {}
+      ## Label example: show service URL in `kubectl cluster-info`
+      # kubernetes.io/cluster-service: "true"
+    ## Limit load balancer source ips to list of CIDRs (where available)
+    # loadBalancerSourceRanges: []
+    selector: {}
+
+  ingress:
+    enabled: true
+    annotations:
+      kubernetes.io/ingress.class: "nginx"
+      kubernetes.io/tls-acme: "true"
+      certmanager.k8s.io/cluster-issuer: "letsencrypt-prod"
+      acme.cert-manager.io/http01-ingress-class: "nginx"
+      cert-manager.io/acme-challenge-type: "http01"
+    path: /
+    hosts:
+      - kibana.yum-poc.com
+    tls: 
+    - secretName: kibana.yum-poc.com-tls
+      hosts:
+      - kibana.yum-poc.com
+
+  serviceAccount:
+    # Specifies whether a service account should be created
+    create: false
+    # The name of the service account to use.
+    # If not set and create is true, a name is generated using the fullname template
+    # If set and create is false, the service account must be existing
+    name:
+
+  livenessProbe:
+    enabled: false
+    path: /status
+    initialDelaySeconds: 30
+    timeoutSeconds: 10
+
+  readinessProbe:
+    enabled: false
+    path: /status
+    initialDelaySeconds: 30
+    timeoutSeconds: 10
+    periodSeconds: 10
+    successThreshold: 5
+
+  # Enable an authproxy. Specify container in extraContainers
+  authProxyEnabled: false
+
+  extraContainers: |
+  # - name: proxy
+  #   image: quay.io/gambol99/keycloak-proxy:latest
+  #   args:
+  #     - --resource=uri=/*
+  #     - --discovery-url=https://discovery-url
+  #     - --client-id=client
+  #     - --client-secret=secret
+  #     - --listen=0.0.0.0:5602
+  #     - --upstream-url=http://127.0.0.1:5601
+  #   ports:
+  #     - name: web
+  #       containerPort: 9090
+
+  extraVolumeMounts: []
+
+  extraVolumes: []
+
+  resources: {}
+    # limits:
+    #   cpu: 100m
+    #   memory: 300Mi
+    # requests:
+    #   cpu: 100m
+    #   memory: 300Mi
+
+  priorityClassName: ""
+
+  # Affinity for pod assignment
+  # Ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/#affinity-and-anti-affinity
+  # affinity: {}
+
+  # Tolerations for pod assignment
+  # Ref: https://kubernetes.io/docs/concepts/configuration/taint-and-toleration/
+  tolerations: []
+
+  # Node labels for pod assignment
+  # Ref: https://kubernetes.io/docs/user-guide/node-selection/
+  nodeSelector: {}
+
+  podAnnotations: {}
+  replicaCount: 1
+  revisionHistoryLimit: 3
+
+  # Custom labels for pod assignment
+  podLabels: {}
+
+  # To export a dashboard from a running Kibana 6.3.x use:
+  # curl --user <username>:<password> -XGET https://kibana.yourdomain.com:5601/api/kibana/dashboards/export?dashboard=<some-dashboard-uuid> > my-dashboard.json
+  # A dashboard is defined by a name and a string with the json payload or the download url
+  dashboardImport:
+    enabled: false
+    timeout: 60
+    xpackauth:
+      enabled: false
+      username: myuser
+      password: mypass
+    dashboards: {}
+      # k8s: https://raw.githubusercontent.com/monotek/kibana-dashboards/master/k8s-fluentd-elasticsearch.json
+
+  # List of plugins to install using initContainer
+  # NOTE : We notice that lower resource constraints given to the chart + plugins are likely not going to work well.
+  plugins:
+    # set to true to enable plugins installation
+    enabled: false
+    # set to true to remove all kibana plugins before installation
+    reset: false
+    # Use <plugin_name,version,url> to add/upgrade plugin
+    values:
+      # - elastalert-kibana-plugin,1.0.1,https://github.com/bitsensor/elastalert-kibana-plugin/releases/download/1.0.1/elastalert-kibana-plugin-1.0.1-6.4.2.zip
+      # - logtrail,0.1.31,https://github.com/sivasamyk/logtrail/releases/download/v0.1.31/logtrail-6.6.0-0.1.31.zip
+      # - other_plugin
+
+  persistentVolumeClaim:
+    # set to true to use pvc
+    enabled: false
+    # set to true to use you own pvc
+    existingClaim: false
+    annotations: {}
+
+    accessModes:
+      - ReadWriteOnce
+    size: "5Gi"
+    ## If defined, storageClassName: <storageClass>
+    ## If set to "-", storageClassName: "", which disables dynamic provisioning
+    ## If undefined (the default) or set to null, no storageClassName spec is
+    ##   set, choosing the default provisioner.  (gp2 on AWS, standard on
+    ##   GKE, AWS & OpenStack)
+    ##
+    # storageClass: "-"
+
+  # default security context
+  securityContext:
+    enabled: false
+    allowPrivilegeEscalation: false
+    runAsUser: 1000
+    fsGroup: 2000
+
+  extraConfigMapMounts: []
+    # - name: logtrail-configs
+    #   configMap: kibana-logtrail
+    #   mountPath: /usr/share/kibana/plugins/logtrail/logtrail.json
+    #   subPath: logtrail.json
+
+  # Add your own init container or uncomment and modify the given example.
+  initContainers: {}
+    ## Don't start kibana till Elasticsearch is reachable.
+    ## Ensure that it is available at http://elasticsearch:9200
+    ##
+    # es-check:  # <- will be used as container name
+    #   image: "appropriate/curl:latest"
+    #   imagePullPolicy: "IfNotPresent"
+    #   command:
+    #     - "/bin/sh"
+    #     - "-c"
+    #     - |
+    #       is_down=true
+    #       while "$is_down"; do
+    #         if curl -sSf --fail-early --connect-timeout 5 http://elasticsearch:9200; then
+    #           is_down=false
+    #         else
+    #           sleep 5
+    #         fi
+    #       done
+
+logstash:
+  enabled: false
+  elasticsearch:
+    host: "elasticsearch-client:9200"
+  replicaCount: 1
+
+  podDisruptionBudget:
+    maxUnavailable: 1
+
+  updateStrategy:
+    type: RollingUpdate
+
+  terminationGracePeriodSeconds: 30
+
+  image:
+    repository: docker.elastic.co/logstash/logstash-oss
+    tag: 7.1.1
+    pullPolicy: IfNotPresent
+    ## Add secrets manually via kubectl on kubernetes cluster and reference here
+    #  pullSecrets:
+    #    - name: "myKubernetesSecret"
+
+  service:
+    type: ClusterIP
+    # clusterIP: None
+    # nodePort:
+    # Set this to local, to preserve client source ip.  Default stripes out the source ip
+    # externalTrafficPolicy: Local
+    annotations: {}
+      ## AWS example for use with LoadBalancer service type.
+      # external-dns.alpha.kubernetes.io/hostname: logstash.cluster.local
+      # service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+      # service.beta.kubernetes.io/aws-load-balancer-internal: "true"
+    ports:
+      # syslog-udp:
+      #   port: 1514
+      #   targetPort: syslog-udp
+      #   protocol: UDP
+      # syslog-tcp:
+      #   port: 1514
+      #   targetPort: syslog-tcp
+      #   protocol: TCP
+      beats:
+        port: 5044
+        targetPort: beats
+        protocol: TCP
+      # http:
+      #  port: 8080
+      #  targetPort: http
+      #  protocol: TCP
+      # loadBalancerIP: 10.0.0.1
+      # loadBalancerSourceRanges:
+      #   - 192.168.0.1
+  ports:
+    # - name: syslog-udp
+    #   containerPort: 1514
+    #   protocol: UDP
+    # - name: syslog-tcp
+    #   containerPort: 1514
+    #   protocol: TCP
+    - name: beats
+      containerPort: 5044
+      protocol: TCP
+    # - name: http
+    #   containerPort: 8080
+    #   protocol: TCP
+
+  ingress:
+    enabled: false
+    annotations: {}
+      # kubernetes.io/ingress.class: nginx
+      # kubernetes.io/tls-acme: "true"
+    path: /
+    hosts:
+      - logstash.cluster.local
+    tls: []
+    #  - secretName: logstash-tls
+    #    hosts:
+    #      - logstash.cluster.local
+
+  # set java options like heap size
+  logstashJavaOpts: "-Xmx1g -Xms1g"
+
+  resources: {}
+    # We usually recommend not to specify default resources and to leave this as a conscious
+    # choice for the user. This also increases chances charts run on environments with little
+    # resources, such as Minikube. If you do want to specify resources, uncomment the following
+    # lines, adjust them as necessary, and remove the curly braces after 'resources:'.
+    # limits:
+    #  cpu: 100m
+    #  memory: 128Mi
+    # requests:
+    #  cpu: 100m
+    #  memory: 128Mi
+
+  priorityClassName: ""
+
+  nodeSelector: {}
+
+  tolerations: []
+
+  securityContext:
+    fsGroup: 1000
+    runAsUser: 1000
+
+  affinity: {}
+    # podAntiAffinity:
+    #   requiredDuringSchedulingIgnoredDuringExecution:
+    #     - topologyKey: "kubernetes.io/hostname"
+    #       labelSelector:
+    #         matchLabels:
+    #           release: logstash
+
+  podAnnotations: {}
+    # iam.amazonaws.com/role: "logstash-role"
+    # prometheus.io/scrape: "true"
+    # prometheus.io/path: "/metrics"
+    # prometheus.io/port: "9198"
+
+  podLabels: {}
+    # team: "developers"
+    # service: "logstash"
+
+  extraEnv: []
+
+  extraInitContainers: []
+    # - name: echo
+    #   image: busybox
+    #   imagePullPolicy: Always
+    #   args:
+    #     - echo
+    #     - hello
+
+  podManagementPolicy: OrderedReady
+   # can be OrderReady or Parallel
+  livenessProbe:
+    httpGet:
+      path: /
+      port: monitor
+    initialDelaySeconds: 20
+    # periodSeconds: 30
+    # timeoutSeconds: 30
+    # failureThreshold: 6
+    # successThreshold: 1
+
+  readinessProbe:
+    httpGet:
+      path: /
+      port: monitor
+    initialDelaySeconds: 20
+    # periodSeconds: 30
+    # timeoutSeconds: 30
+    # failureThreshold: 6
+    # successThreshold: 1
+
+  persistence:
+    enabled: true
+    ## logstash data Persistent Volume Storage Class
+    ## If defined, storageClassName: <storageClass>
+    ## If set to "-", storageClassName: "", which disables dynamic provisioning
+    ## If undefined (the default) or set to null, no storageClassName spec is
+    ##   set, choosing the default provisioner.  (gp2 on AWS, standard on
+    ##   GKE, AWS & OpenStack)
+    ##
+    # storageClass: "-"
+    accessMode: ReadWriteOnce
+    size: 2Gi
+
+  volumeMounts:
+    - name: data
+      mountPath: /usr/share/logstash/data
+    - name: patterns
+      mountPath: /usr/share/logstash/patterns
+    - name: files
+      mountPath: /usr/share/logstash/files
+    - name: pipeline
+      mountPath: /usr/share/logstash/pipeline
+
+  volumes: []
+    # - name: tls
+    #   secret:
+    #     secretName: logstash-tls
+    # - name: pipeline
+    #   configMap:
+    #     name: logstash-pipeline
+    # - name: certs
+    #   hostPath:
+    #     path: /tmp
+
+  exporter:
+    logstash:
+      enabled: false
+      image:
+        repository: bonniernews/logstash_exporter
+        tag: v0.1.2
+        pullPolicy: IfNotPresent
+      env: {}
+      resources: {}
+      path: /metrics
+      port: 9198
+      target:
+        port: 9600
+        path: /metrics
+      livenessProbe:
+        httpGet:
+          path: /metrics
+          port: ls-exporter
+        periodSeconds: 15
+        timeoutSeconds: 60
+        failureThreshold: 8
+        successThreshold: 1
+      readinessProbe:
+        httpGet:
+          path: /metrics
+          port: ls-exporter
+        periodSeconds: 15
+        timeoutSeconds: 60
+        failureThreshold: 8
+        successThreshold: 1
+    serviceMonitor:
+      ## If true, a ServiceMonitor CRD is created for a prometheus operator
+      ## https://github.com/coreos/prometheus-operator
+      ##
+      enabled: false
+      #  namespace: monitoring
+      labels: {}
+      interval: 10s
+      scrapeTimeout: 10s
+      scheme: http
+      port: metrics
+
+  elasticsearch:
+    host: elasticsearch-client
+    port: 9200
+
+  ## ref: https://github.com/elastic/logstash-docker/blob/master/build/logstash/env2yaml/env2yaml.go
+  config:
+    config.reload.automatic: "true"
+    path.config: /usr/share/logstash/pipeline
+    path.data: /usr/share/logstash/data
+
+    ## ref: https://www.elastic.co/guide/en/logstash/current/persistent-queues.html
+    queue.checkpoint.writes: 1
+    queue.drain: "true"
+    queue.max_bytes: 1gb  # disk capacity must be greater than the value of `queue.max_bytes`
+    queue.type: persisted
+
+  ## Patterns for filters.
+  ## Each YAML heredoc will become a separate pattern file.
+  patterns:
+    # main: |-
+    #   TESTING {"foo":.*}$
+
+  ## Custom files that can be referenced by plugins.
+  ## Each YAML heredoc will become located in the logstash home directory under
+  ## the files subdirectory.
+  files:
+    # logstash-template.json: |-
+    #   {
+    #     "order": 0,
+    #     "version": 1,
+    #     "index_patterns": [
+    #       "logstash-*"
+    #     ],
+    #     "settings": {
+    #       "index": {
+    #         "refresh_interval": "5s"
+    #       }
+    #     },
+    #     "mappings": {
+    #       "doc": {
+    #         "_meta": {
+    #           "version": "1.0.0"
+    #         },
+    #         "enabled": false
+    #       }
+    #     },
+    #     "aliases": {}
+    #   }
+
+  ## Custom binary files encoded as base64 string that can be referenced by plugins
+  ## Each base64 encoded string is decoded & mounted as a file under logstash home directory under
+  ## the files subdirectory.
+  binaryFiles: {}
+
+  ## NOTE: To achieve multiple pipelines with this chart, current best practice
+  ## is to maintain one pipeline per chart release. In this way configuration is
+  ## simplified and pipelines are more isolated from one another.
+
+  inputs:
+    main: |-
+      input {
+        # udp {
+        #   port => 1514
+        #   type => syslog
+        # }
+        # tcp {
+        #   port => 1514
+        #   type => syslog
+        # }
+        beats {
+          port => 5044
+        }
+        # http {
+        #   port => 8080
+        # }
+        # kafka {
+        #   ## ref: https://www.elastic.co/guide/en/logstash/current/plugins-inputs-kafka.html
+        #   bootstrap_servers => "kafka-input:9092"
+        #   codec => json { charset => "UTF-8" }
+        #   consumer_threads => 1
+        #   topics => ["source"]
+        #   type => "example"
+        # }
+      }
+  filters:
+    # main: |-
+    #   filter {
+    #   }
+
+  outputs:
+    main: |-
+      output {
+        # stdout { codec => rubydebug }
+        elasticsearch {
+          hosts => ["${ELASTICSEARCH_HOST}:${ELASTICSEARCH_PORT}"]
+          manage_template => false
+          index => "%{[@metadata][beat]}-%{+YYYY.MM.dd}"
+        }
+        # kafka {
+        #   ## ref: https://www.elastic.co/guide/en/logstash/current/plugins-outputs-kafka.html
+        #   bootstrap_servers => "kafka-output:9092"
+        #   codec => json { charset => "UTF-8" }
+        #   compression_type => "lz4"
+        #   topic_id => "destination"
+        # }
+      }
+  serviceAccount:
+    # Specifies whether a ServiceAccount should be created
+    create: true
+    # The name of the ServiceAccount to use.
+    # If not set and create is true, a name is generated using the fullname template
+    name:
+
+  ## Additional arguments to pass to the Logstash entrypoint
+  # args:
+    # - fizz
+
+filebeat:
+  enabled: true
+  # config:
+  #   output.file.enabled: false
+  #   output.logstash:
+  #     hosts: ["elastic-stack-logstash:5044"]
+  # indexTemplateLoad:
+  #   - elastic-stack-elasticsearch-client:9200
+  image:
+    repository: docker.elastic.co/beats/filebeat-oss
+    tag: 7.0.1
+    pullPolicy: IfNotPresent
+
+  overrideConfig:
+    filebeat.autodiscover:
+      providers:
+        - type: kubernetes
+          hints.enabled: true
+          hints.default_config:
+            type: container
+            paths:
+              - /var/log/container/*-${container.id}.log  # CRI path
+    filebeat.config:
+      modules:
+        path: ${path.config}/modules.d/*.yml
+        reload.enabled: false
+    filebeat.inputs:
+    - enabled: true
+      paths:
+      - /var/log/*.log
+      - /var/log/messages
+      - /var/log/syslog
+      type: log
+    - containers.ids:
+      - '*'
+      processors:
+      - add_kubernetes_metadata:
+          in_cluster: true
+      - drop_event:
+          when:
+            equals:
+              kubernetes.container.name: filebeat
+      type: docker
+    http.enabled: true
+    http.port: 5066
+    output:
+      elasticsearch:
+        hosts:
+        - http://elasticsearch-client:9200
+      file:
+        enabled: false
+    output.file:
+      filename: filebeat
+      number_of_files: 5
+      path: /usr/share/filebeat/data
+      rotate_every_kb: 10000
+    processors:
+    - add_cloud_metadata: null
+
+  # Path on the host to mount to /usr/share/filebeat/data in the container.
+  data:
+    hostPath: /var/lib/filebeat
+
+  # Upload index template to Elasticsearch if Logstash output is enabled
+  # https://www.elastic.co/guide/en/beats/filebeat/current/filebeat-template.html
+  # List of Elasticsearch hosts
+  indexTemplateLoad: []
+    # - elasticsearch:9200
+
+  # List of beat plugins
+  plugins: []
+    # - kinesis.so
+
+  # pass custom command. This is equivalent of Entrypoint in docker
+  command: []
+
+  # pass custom args. This is equivalent of Cmd in docker
+  args: []
+
+  # A list of additional environment variables
+  extraVars: []
+    # - name: TEST1
+    #   value: TEST2
+    # - name: TEST3
+    #   valueFrom:
+    #     configMapKeyRef:
+    #       name: configmap
+    #       key: config.key
+
+  # Add additional volumes and mounts, for example to read other log files on the host
+  extraVolumes: []
+    # - hostPath:
+    #     path: /var/log
+    #   name: varlog
+  extraVolumeMounts: []
+    # - name: varlog
+    #   mountPath: /host/var/log
+    #   readOnly: true
+  extraSecrets: {}
+    # secret: "TEST1"
+
+  extraInitContainers: []
+    # - name: echo
+    #   image: busybox
+    #   imagePullPolicy: Always
+    #   args:
+    #     - echo
+    #     - hello
+
+  resources: {}
+    # We usually recommend not to specify default resources and to leave this as a conscious
+    # choice for the user. This also increases chances charts run on environments with little
+    # resources, such as Minikube. If you do want to specify resources, uncomment the following
+    # lines, adjust them as necessary, and remove the curly braces after 'resources:'.
+    # limits:
+    #  cpu: 100m
+    #  memory: 200Mi
+    # requests:
+    #  cpu: 100m
+    #  memory: 100Mi
+
+  priorityClassName: ""
+
+  nodeSelector: {}
+
+  annotations: {}
+
+  tolerations: []
+    # - operator: Exists
+
+  affinity: {}
+
+  rbac:
+    # Specifies whether RBAC resources should be created
+    create: true
+
+  serviceAccount:
+    # Specifies whether a ServiceAccount should be created
+    create: true
+    # The name of the ServiceAccount to use.
+    # If not set and create is true, a name is generated using the fullname template
+    name:
+
+  ## Specify if a Pod Security Policy for filebeat must be created
+  ## Ref: https://kubernetes.io/docs/concepts/policy/pod-security-policy/
+  ##
+  podSecurityPolicy:
+    enabled: False
+    annotations: {}
+      ## Specify pod annotations
+      ## Ref: https://kubernetes.io/docs/concepts/policy/pod-security-policy/#apparmor
+      ## Ref: https://kubernetes.io/docs/concepts/policy/pod-security-policy/#seccomp
+      ## Ref: https://kubernetes.io/docs/concepts/policy/pod-security-policy/#sysctl
+      ##
+      # seccomp.security.alpha.kubernetes.io/allowedProfileNames: '*'
+      # seccomp.security.alpha.kubernetes.io/defaultProfileName: 'docker/default'
+      # apparmor.security.beta.kubernetes.io/defaultProfileName: 'runtime/default'
+
+  privileged: false
+
+  ## Add Elastic beat-exporter for Prometheus
+  ## https://github.com/trustpilot/beat-exporter
+  ## Dont forget to enable http on config.http.enabled (exposing filebeat stats)
+  monitoring:
+    enabled: true
+    serviceMonitor:
+      # When set true and if Prometheus Operator is installed then use a ServiceMonitor to configure scraping
+      enabled: true
+      # Set the namespace the ServiceMonitor should be deployed
+      # namespace: monitoring
+      # Set how frequently Prometheus should scrape
+      # interval: 30s
+      # Set path to beats-exporter telemtery-path
+      # telemetryPath: /metrics
+      # Set labels for the ServiceMonitor, use this to define your scrape label for Prometheus Operator
+      # labels:
+    image:
+      repository: trustpilot/beat-exporter
+      tag: 0.1.1
+      pullPolicy: IfNotPresent
+    resources: {}
+    # We usually recommend not to specify default resources and to leave this as a conscious
+    # choice for the user. This also increases chances charts run on environments with little
+    # resources, such as Minikube. If you do want to specify resources, uncomment the following
+    # lines, adjust them as necessary, and remove the curly braces after 'resources:'.
+    # limits:
+    #  cpu: 100m
+    #  memory: 200Mi
+    # requests:
+    #  cpu: 100m
+    #  memory: 100Mi
+
+    # pass custom args. This is equivalent of Cmd in docker
+    args: []
+
+    ## default is ":9479". If changed, need pass argument "-web.listen-address <...>"
+    exporterPort: 9479
+    ## Filebeat service port, which exposes Prometheus metrics
+    targetPort: 9479
+
+elasticsearch-curator:
+  enabled: false
+
+elasticsearch-exporter:
+  enabled: false
